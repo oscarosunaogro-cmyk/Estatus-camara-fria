@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Estatus Cámaras Frías</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.1/firebase-app-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.1/firebase-firestore-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/firebase@10.13.1/firebase-auth-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{ box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px); }
+  html{ scroll-padding-top:env(safe-area-inset-top,0px); }
+  body{ background:#f4f5f7; }
+  .card-ok{ background:#ecfdf3; border-color:#bbf0cf; }
+  .card-bad{ background:#fef2f2; border-color:#fecaca; }
+  .dot-ok{ background:#16a34a; }
+  .dot-bad{ background:#dc2626; }
+</style>
+</head>
+<body class="text-slate-800">
+
+<header class="sticky top-0 z-20 bg-[#0b2545] text-white" style="padding-top:env(safe-area-inset-top,0px)">
+  <div class="max-w-5xl mx-auto px-4 py-3">
+    <div class="flex items-center gap-2 text-xs font-semibold tracking-wide text-orange-300">
+      <span class="w-2 h-2 rounded-full bg-orange-400"></span> ESTATUS CÁMARA FRÍA
+    </div>
+    <h1 class="text-xl sm:text-2xl font-bold mt-1">Control de cámaras frías por tienda</h1>
+    <p class="text-xs sm:text-sm text-slate-300 mt-1"><span id="totalTiendas">252</span> tiendas · <span id="conFalla">0</span> con falla activa · <span id="habilitadas">0</span> habilitadas para pedido</p>
+    <div class="mt-2 h-2 bg-white/10 rounded-full overflow-hidden">
+      <div id="barra" class="h-full bg-orange-400" style="width:0%"></div>
+    </div>
+    <button id="btnExportar" class="mt-3 bg-orange-400 hover:bg-orange-300 text-[#0b2545] text-xs font-semibold px-3 py-1.5 rounded-lg">⬇ Exportar a Excel</button>
+  </div>
+</header>
+
+<div class="max-w-5xl mx-auto px-4 py-4">
+  <div class="flex flex-col sm:flex-row gap-2 mb-3">
+    <input id="buscar" type="text" placeholder="Buscar tienda, ID o zona..." class="flex-1 border rounded-lg px-3 py-2 text-sm shadow-sm">
+    <select id="filtroRegion" class="border rounded-lg px-3 py-2 text-sm shadow-sm bg-white"><option value="">Todas las regiones</option></select>
+    <select id="filtroEstatus" class="border rounded-lg px-3 py-2 text-sm shadow-sm bg-white">
+      <option value="">Todos los estatus</option>
+      <option value="ok">Óptimas</option>
+      <option value="falla">Con fallas</option>
+    </select>
+  </div>
+  <p class="text-xs text-slate-500 mb-3">Este panel es compartido: los cambios se sincronizan en vivo para todos los que abran este enlace.</p>
+  <div id="lista" class="space-y-4"></div>
+</div>
+
+<template id="tplGrupo">
+  <div class="grupo">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="font-semibold text-slate-700 grupo-titulo"></h2>
+      <span class="text-xs bg-white border rounded-full px-2 py-1 grupo-contador"></span>
+    </div>
+    <div class="space-y-2 grupo-tiendas"></div>
+  </div>
+</template>
+
+<template id="tplTienda">
+  <div class="tienda-card border rounded-xl p-4 shadow-sm transition-colors">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full dot"></span>
+          <h3 class="font-semibold nombre"></h3>
+        </div>
+        <p class="text-xs text-slate-500 mt-0.5"><span class="font-mono id"></span> · <span class="zona"></span></p>
+      </div>
+      <label class="flex items-center gap-2 cursor-pointer select-none shrink-0">
+        <span class="text-xs font-medium estado-txt"></span>
+        <input type="checkbox" class="switch-optima sr-only">
+        <span class="switch-track relative inline-block w-10 h-6 rounded-full transition-colors">
+          <span class="switch-thumb absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"></span>
+        </span>
+      </label>
+    </div>
+    <div class="form-falla hidden mt-3 pt-3 border-t border-red-200 space-y-2 text-sm">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Fecha y hora de la falla *</label>
+        <input type="datetime-local" class="in-fecha-falla w-full border rounded-lg px-2 py-1.5 text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">N° de reporte a mantenimiento *</label>
+        <input type="text" class="in-reporte w-full border rounded-lg px-2 py-1.5 text-sm" placeholder="Ej. RPT-00123">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Usuario que reporta *</label>
+        <input type="text" class="in-usuario w-full border rounded-lg px-2 py-1.5 text-sm" placeholder="Ej. Juan Pérez">
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button class="btn-guardar bg-[#0b2545] text-white text-xs font-medium px-3 py-1.5 rounded-lg">Guardar reporte</button>
+      </div>
+      <p class="text-xs text-slate-500">Para reactivar la tienda una vez reparada, vuelve a poner el switch en "Óptimas".</p>
+      <p class="msg-guardado text-xs text-green-700 hidden">Guardado ✓</p>
+    </div>
+  </div>
+</template>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDKHg49E6HHxBtSXbmLrjoBVePoPf1sBag",
+  authDomain: "estatus-camara-fria.firebaseapp.com",
+  projectId: "estatus-camara-fria",
+  storageBucket: "estatus-camara-fria.firebasestorage.app",
+  messagingSenderId: "48580509660",
+  appId: "1:48580509660:web:677e56cf7e823c45351919"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+const col = db.collection("camaras_frias");
+
+firebase.auth().signInAnonymously().catch(err => {
+  console.error("Error de autenticación anónima:", err);
+  alert("No se pudo conectar de forma segura a la base de datos. Recarga la página.");
+});
+
+const TIENDAS = [{"id": 106, "nombre": "ANGEL R CABADA", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 111, "nombre": "XALAPA", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 113, "nombre": "LAS TRANCAS", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 121, "nombre": "JALACINGO", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 122, "nombre": "TEZIUTLAN LERDO", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 125, "nombre": "TEOCELO 5 DE MAYO", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 135, "nombre": "MARTIRES DEL 28", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 147, "nombre": "JOSE AZUETA", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 156, "nombre": "LAS VIGAS VER", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 207, "nombre": "ATENAS VERACRUZANA", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 214, "nombre": "PLAYA LINDA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 223, "nombre": "PASEO LA BURRITA", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 236, "nombre": "PAPANTLA CENTRO", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 240, "nombre": "ALTO LUCERO", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 253, "nombre": "TAMALIN", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 254, "nombre": "ENTABLADERO BENITO JUAREZ", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 259, "nombre": "JALAPILLA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 260, "nombre": "JUCHIQUE", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 263, "nombre": "NAOLINCO", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 265, "nombre": "CAMALOTE", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 266, "nombre": "HUEHUETLA", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 270, "nombre": "TIERRA BLANCA MERCADO", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 272, "nombre": "COATEPEC MERCADO", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 313, "nombre": "LA MIXTEQUILLA", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 315, "nombre": "TEMASCAL", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 333, "nombre": "LOMA BONITA MERCADO", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 335, "nombre": "COSOLAPA MERCADO", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 337, "nombre": "CHIGNAUTLA", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 338, "nombre": "RIO MEDIO 4", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 347, "nombre": "AV QUEVEDO", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 352, "nombre": "HUEYTAMALCO", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 364, "nombre": "VALLE NACIONAL", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 369, "nombre": "PANUCO ABASTO", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 371, "nombre": "ACATLAN CENTRO", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 415, "nombre": "ACTOPAN SAN FRANCISCO", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 419, "nombre": "SOLEDAD DE DOBLADO 5 DE MAYO", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 426, "nombre": "PASO DE OVEJAS INSURGENTES 1", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 435, "nombre": "LA PERLA CENTRO", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 436, "nombre": "TLALIXCOYAN 1", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 443, "nombre": "TOTUTLA", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 447, "nombre": "COSAMALOAPAN MERCADO", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 471, "nombre": "PASO DEL MACHO", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 478, "nombre": "ALDAMA TUXTEPEC", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 493, "nombre": "TUXTEPEC CENTRO 2", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 502, "nombre": "ZOZOCOLCO CENTRO", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 503, "nombre": "JAMAPA ORIENTE", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 504, "nombre": "TLALNEHUAYOCAN", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 515, "nombre": "LOS NARANJOS VERACRUZ", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 520, "nombre": "TUXTEPEC CARRANZA", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 541, "nombre": "TECOLUTLA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 562, "nombre": "PUENTE MORENO", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 565, "nombre": "CALLE 8 COL CARRANZA", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 566, "nombre": "TIHUATLAN CUAUHTEMOC", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 571, "nombre": "POTRERO NUEVO", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 574, "nombre": "ALAMO INDEPENDENCIA", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 575, "nombre": "COTAXTLA JUAREZ", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 591, "nombre": "PEROTE ALDAMA", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 592, "nombre": "PLATON SANCHEZ", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 618, "nombre": "ALTOTONGA HIDALGO", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 622, "nombre": "TEMPOAL", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 637, "nombre": "NAUTLA MARACAIBO", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 643, "nombre": "POZA RICA AVILA CAMACHO", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 652, "nombre": "FILOMENO MATA 5 DE MAYO", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 671, "nombre": "ATLAPEXCO", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 673, "nombre": "INDEPENDENCIA MARTINEZ", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 680, "nombre": "OJITLAN II", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 702, "nombre": "CARDEL REVOLUCION", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 703, "nombre": "CARRANZA 5 DE MAYO", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 704, "nombre": "REVOLUCION SAN RAFAEL", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 705, "nombre": "CARRIZAL ZAPATA", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 707, "nombre": "EL RUBI", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 721, "nombre": "JALTOCAN", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 734, "nombre": "TUXTEPEC HIDALGO", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 735, "nombre": "CASITAS VERACRUZ", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 736, "nombre": "MARIA DE LA TORRE", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 737, "nombre": "EL MORRO VERACRUZ", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 751, "nombre": "MANGOS ALTAMIRA", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 760, "nombre": "TANTOYUCA CALLE 12 DE JULIO", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 776, "nombre": "CERVECERA", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 782, "nombre": "TEPETZINTLA", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 787, "nombre": "CHICONTEPEC VERACRUZ", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 812, "nombre": "COSAUTLAN VERACRUZ", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 821, "nombre": "BOCA DEL RIO CENTRO", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 822, "nombre": "MATAMOROS PINOS", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 823, "nombre": "INTERCOLONIA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 829, "nombre": "MANTE SUZUKI", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 834, "nombre": "ORIZATLAN HIDALGO", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 853, "nombre": "PALMA SOLA VERACRUZ", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 862, "nombre": "FORTIN PARQUE", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 875, "nombre": "TAMPICO MERCADO", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 876, "nombre": "PANUCO MERCADO", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 877, "nombre": "CUITLAHUAC SAN PEDRO", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 879, "nombre": "METLALTOYUCA", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 886, "nombre": "TEJERIA", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 912, "nombre": "LA CABRILLA TAMIAHUA", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 915, "nombre": "NUEVO NECAXA", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 931, "nombre": "MERCADO HEROES 47 TUXPAN", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 932, "nombre": "J B LOBOS", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 938, "nombre": "ACULTZINGO CENTRO", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 959, "nombre": "TAMPICO PALAFOX", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 986, "nombre": "ESTACION MANUEL", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1002, "nombre": "DOS LOMAS", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 1009, "nombre": "CERRO AZUL LA CURVA", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 1012, "nombre": "MALTRATA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 1016, "nombre": "MISANTLA E ALATRISTE", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 1020, "nombre": "AMAPOLAS PUERTO", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 1056, "nombre": "OZULUAMA", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 1092, "nombre": "ALDAMA LIBERTAD", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1094, "nombre": "ALTAMIRA LAGUNA", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1125, "nombre": "COACOATZINTLA VER", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 1129, "nombre": "TAMPICO MERCADO NORTE", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 1145, "nombre": "OASIS SONORA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1152, "nombre": "PAPANTLA", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 1153, "nombre": "TEZONAPA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 1157, "nombre": "SAN JOSE CHILTEPEC", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 1158, "nombre": "REFORMA COATZINTLA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 1174, "nombre": "TORTUGA PUENTE MORENO", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 1187, "nombre": "PUEBLO VIEJO", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 1205, "nombre": "TEQUILA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 1209, "nombre": "TUXPAN LOS CABOS", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 1235, "nombre": "TUXTEPEC", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 1236, "nombre": "HUEJUTLA", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 1237, "nombre": "TLALTETELA", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 1244, "nombre": "JALAPA DE DIAZ JUAREZ", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 1246, "nombre": "MADERO SANTA ELENA", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1247, "nombre": "YANGA CALLE 8", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 1249, "nombre": "NUEVO TAMPICO", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1259, "nombre": "AGUA FRIA KIOSKO", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 1261, "nombre": "VISTAMAR", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 1264, "nombre": "VALLE GAVIOTA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1272, "nombre": "TUXPAN AMERICAS", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 1283, "nombre": "COXQUIHUI HIDALGO Y RAYON", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 1286, "nombre": "EL PASO TANTOYUCA", "region": "VERACRUZ NORTE", "zona": "MTZ DE LA TORRE"}, {"id": 1289, "nombre": "TANTOYUCA MI MERCADO", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 1292, "nombre": "XANA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1307, "nombre": "MECAPALAPA PUEBLA", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 1313, "nombre": "CABADA GANADERA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 1316, "nombre": "IXHUATLAN CENTRO", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 1318, "nombre": "LAS VEGAS OBREGON", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 1321, "nombre": "LA PETROMEX", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 1349, "nombre": "TIERRA COLORADA VER", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 1355, "nombre": "ANTON LIZARDO AZUETA II", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 1383, "nombre": "TUXTEPEC 5 DE MAYO", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 1392, "nombre": "MANLIO BENITO JUAREZ", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 1395, "nombre": "AYOTZINTEPEC", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 1404, "nombre": "TAMPICO CALLE HEROES CENTRO", "region": "VERACRUZ NORTE", "zona": "TAMPICO NORTE"}, {"id": 1411, "nombre": "IXCATEPEC", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 1412, "nombre": "EL HIGO MERCADO C", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 1417, "nombre": "CENTRAL CARAM", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 1426, "nombre": "HUEJUTLA MERCADO", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 1438, "nombre": "TIERRA BLANCA PLAZA CENTRO", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 1497, "nombre": "CHICONTEPEC CENTRO", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 1502, "nombre": "AV 6 CORDOBA", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 1504, "nombre": "ABASTO PLAN DE AYALA", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 1515, "nombre": "AMATLAN REYES", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 1527, "nombre": "AMERICA PUENTE MORENO", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 1530, "nombre": "CARRILLO CRUCERO", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 1535, "nombre": "AGUA DULCE PARQUE", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 1545, "nombre": "ARISTA Y GLADIOLAS", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 1552, "nombre": "TEHUETLAN", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 1555, "nombre": "JOACHIN CENTRO", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 1559, "nombre": "LA ROTONDA", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1576, "nombre": "MATAMOROS POZA RICA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 1583, "nombre": "CAMERINO Z MENDOZA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 1597, "nombre": "HUEJUTLA CHACATITLA", "region": "VERACRUZ NORTE", "zona": "HUEJUTLA"}, {"id": 1605, "nombre": "SAN ANDRES CENTRO", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 1637, "nombre": "LOS LAGOS", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 1641, "nombre": "GRAJALES TUXTEPEC", "region": "VERACRUZ SUR", "zona": "TUXTEPEC"}, {"id": 1648, "nombre": "COLATLAN", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 1652, "nombre": "KAWATZIN COLONIA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 1653, "nombre": "NACIONAL POZA RICA", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 1659, "nombre": "CUICHAPA CENTRO", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 1664, "nombre": "LERDO CARRETERA", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 1683, "nombre": "RAFAEL CRAVIOTO", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 1689, "nombre": "RIO SAN ISIDRO", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1715, "nombre": "COCOTERO", "region": "VERACRUZ NORTE", "zona": "TAMPICO SUR"}, {"id": 1731, "nombre": "EL CONEJO", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 1732, "nombre": "TANTOYUCA CENTRO", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 1740, "nombre": "LA LAGUNA 2", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 1742, "nombre": "MONTE BLANCO CENTRO", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 1785, "nombre": "LOMA BONITA CENTRO", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 1792, "nombre": "MI TANTOYUCA", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 1796, "nombre": "BOCA NEGRA ABASTO", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 1811, "nombre": "TETILA", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 1822, "nombre": "RESERVA II", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 1844, "nombre": "SAN BARTOLO", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 2520, "nombre": "ALTOTONGA", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 2845, "nombre": "TLACOTALPAN", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 2853, "nombre": "BENITO JUAREZ", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 2855, "nombre": "CARLOS A. CARRILLO", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 2856, "nombre": "ALVARADO", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 2857, "nombre": "EBANO", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 2858, "nombre": "TANTOYUCA", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 2860, "nombre": "16 DE SEPTIEMBRE", "region": "VERACRUZ NORTE", "zona": "TANTOYUCA"}, {"id": 2863, "nombre": "SOLEDAD DE DOBLADO", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 2864, "nombre": "TLAPACOYAN", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 2865, "nombre": "ALAMO", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 2867, "nombre": "MISANTLA", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 2868, "nombre": "NARANJOS", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 2869, "nombre": "REVOLUCION SOCIAL", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 2920, "nombre": "TEZIUTLAN", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 2945, "nombre": "CERRO AZUL", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 3114, "nombre": "XICOTEPEC", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 3371, "nombre": "COATEPEC CENTRO", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 3455, "nombre": "COSAMALOAPAN", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 3544, "nombre": "CORDOBA AV 11", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 3555, "nombre": "DIAZ MIRON", "region": "VERACRUZ CENTRO", "zona": "PORTUARIA"}, {"id": 4509, "nombre": "HUAUCHINANGO", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 5961, "nombre": "BOCA DEL RIO", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 6460, "nombre": "GUTIERREZ ZAMORA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 7230, "nombre": "ORIZABA CANADA", "region": "VERACRUZ SUR", "zona": "CORDOBA"}, {"id": 7231, "nombre": "Cordoba Mercado", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 7235, "nombre": "TIERRA BLANCA", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 7236, "nombre": "COSCOMATEPEC", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 7254, "nombre": "CATEMACO", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 8905, "nombre": "EL TEJAR", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 8927, "nombre": "JUAN SOTO", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 8932, "nombre": "MARTINEZ DE LA TORRE", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 8935, "nombre": "VEGA DE ALATORRE", "region": "VERACRUZ CENTRO", "zona": "COSTA ESMERALDA"}, {"id": 8939, "nombre": "GALVAN", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 8940, "nombre": "MERCADITO CARDEL", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 8949, "nombre": "COYUTLA", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 8953, "nombre": "PIEDRAS NEGRAS", "region": "VERACRUZ SUR", "zona": "ORIZABA"}, {"id": 8957, "nombre": "TRES VALLES", "region": "VERACRUZ SUR", "zona": "CUENCA"}, {"id": 8958, "nombre": "Paso del Toro", "region": "VERACRUZ SUR", "zona": "PUERTO"}, {"id": 8960, "nombre": "ZAMORA VERACRUZ", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 8961, "nombre": "LAZARO CARDENAS", "region": "VERACRUZ CENTRO", "zona": "HEROICA"}, {"id": 8962, "nombre": "ALVARADO CENTRAL", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 8963, "nombre": "CASTILLO JALAPA", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 8964, "nombre": "CORDOBA SAN MIGUEL", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 8966, "nombre": "JILOTEPEC", "region": "VERACRUZ CENTRO", "zona": "XALAPA"}, {"id": 9011, "nombre": "MARIANO ABASOLO", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 9014, "nombre": "HUATUSCO", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 9017, "nombre": "CHOCAMAN", "region": "VERACRUZ SUR", "zona": "CAFETALERA"}, {"id": 9019, "nombre": "Cempoala", "region": "VERACRUZ CENTRO", "zona": "CARDEL"}, {"id": 9021, "nombre": "LAGOS", "region": "VERACRUZ CENTRO", "zona": "COATEPEC"}, {"id": 9023, "nombre": "TUXPAN RADIO", "region": "VERACRUZ NORTE", "zona": "TUXPAN"}, {"id": 9029, "nombre": "PAGES", "region": "VERACRUZ CENTRO", "zona": "BOCA DEL RIO"}, {"id": 9037, "nombre": "LA BURRITA MERCADO", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 9038, "nombre": "SANTIAGO TUXTLA", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}, {"id": 9040, "nombre": "CEIBA", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 9046, "nombre": "TUXTEPEC JUAREZ", "region": "VERACRUZ SUR", "zona": "PINERA"}, {"id": 9048, "nombre": "NINO ARTILLERO", "region": "VERACRUZ NORTE", "zona": "PAPANTLA"}, {"id": 9049, "nombre": "LLANO EN MEDIO", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 9052, "nombre": "TEZIUTLAN 16 DE SEPTIEMBRE", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 9067, "nombre": "LA UNO 12 DE DICIEMBRE", "region": "VERACRUZ NORTE", "zona": "HUAUCHINANGO"}, {"id": 9080, "nombre": "MARIANO ARISTA", "region": "VERACRUZ NORTE", "zona": "GUTIERREZ ZAMORA"}, {"id": 9084, "nombre": "TEZIUTLAN HIDALGO", "region": "VERACRUZ CENTRO", "zona": "TEZIUTLAN"}, {"id": 9094, "nombre": "ALVARADO MERCADO", "region": "VERACRUZ SUR", "zona": "ALVARADO"}, {"id": 9097, "nombre": "TIHUATLAN", "region": "VERACRUZ NORTE", "zona": "ALAMO"}, {"id": 9101, "nombre": "CAZONES", "region": "VERACRUZ NORTE", "zona": "POZA RICA"}, {"id": 9112, "nombre": "MANUEL DE LA CABADA", "region": "VERACRUZ SUR", "zona": "TUXTLAS"}];
+
+let estados = {}; // id -> {optima, fechaFalla, numeroReporte, fechaSolucion}
+let filtro = { texto: "", region: "", estatus: "" };
+
+const elLista = document.getElementById("lista");
+const elBuscar = document.getElementById("buscar");
+const elRegion = document.getElementById("filtroRegion");
+const elEstatus = document.getElementById("filtroEstatus");
+
+// Poblar filtro de regiones
+[...new Set(TIENDAS.map(t => t.region))].sort().forEach(r => {
+  const o = document.createElement("option"); o.value = r; o.textContent = r; elRegion.appendChild(o);
+});
+
+function defaultEstado(){ return { optima: true, fechaFalla: "", numeroReporte: "", usuario: "" }; }
+
+function actualizarHeader(){
+  const total = TIENDAS.length;
+  const conFalla = TIENDAS.filter(t => !(estados[t.id] || defaultEstado()).optima).length;
+  document.getElementById("totalTiendas").textContent = total;
+  document.getElementById("conFalla").textContent = conFalla;
+  document.getElementById("habilitadas").textContent = total - conFalla;
+  document.getElementById("barra").style.width = ((total - conFalla) / total * 100).toFixed(0) + "%";
+}
+
+function render(){
+  elLista.innerHTML = "";
+  const texto = filtro.texto.trim().toLowerCase();
+  const filtradas = TIENDAS.filter(t => {
+    const est = estados[t.id] || defaultEstado();
+    if (filtro.region && t.region !== filtro.region) return false;
+    if (filtro.estatus === "ok" && !est.optima) return false;
+    if (filtro.estatus === "falla" && est.optima) return false;
+    if (texto && !(`${t.nombre} ${t.id} ${t.zona}`.toLowerCase().includes(texto))) return false;
+    return true;
+  });
+
+  const porZona = {};
+  filtradas.forEach(t => { (porZona[t.zona] = porZona[t.zona] || []).push(t); });
+  const zonasOrdenadas = Object.keys(porZona).sort();
+
+  const tplGrupo = document.getElementById("tplGrupo");
+  const tplTienda = document.getElementById("tplTienda");
+
+  zonasOrdenadas.forEach(zona => {
+    const grupo = tplGrupo.content.cloneNode(true);
+    grupo.querySelector(".grupo-titulo").textContent = zona;
+    const arr = porZona[zona];
+    const ok = arr.filter(t => (estados[t.id] || defaultEstado()).optima).length;
+    grupo.querySelector(".grupo-contador").textContent = `${ok}/${arr.length} óptimas`;
+    const cont = grupo.querySelector(".grupo-tiendas");
+    arr.forEach(t => cont.appendChild(crearTarjeta(t)));
+    elLista.appendChild(grupo);
+  });
+
+  actualizarHeader();
+}
+
+function crearTarjeta(t){
+  const tpl = document.getElementById("tplTienda");
+  const node = tpl.content.cloneNode(true);
+  const card = node.querySelector(".tienda-card");
+  const est = estados[t.id] || defaultEstado();
+
+  node.querySelector(".nombre").textContent = t.nombre;
+  node.querySelector(".id").textContent = "ID " + t.id;
+  node.querySelector(".zona").textContent = t.zona;
+
+  const chk = node.querySelector(".switch-optima");
+  const track = node.querySelector(".switch-track");
+  const thumb = node.querySelector(".switch-thumb");
+  const dot = node.querySelector(".dot");
+  const estadoTxt = node.querySelector(".estado-txt");
+  const form = node.querySelector(".form-falla");
+  const inFecha = node.querySelector(".in-fecha-falla");
+  const inReporte = node.querySelector(".in-reporte");
+  const inUsuario = node.querySelector(".in-usuario");
+  const btnGuardar = node.querySelector(".btn-guardar");
+  const msg = node.querySelector(".msg-guardado");
+
+  inFecha.value = est.fechaFalla || "";
+  inReporte.value = est.numeroReporte || "";
+  inUsuario.value = est.usuario || "";
+
+  function pintar(){
+    chk.checked = est.optima;
+    card.classList.toggle("card-ok", est.optima);
+    card.classList.toggle("card-bad", !est.optima);
+    dot.classList.toggle("dot-ok", est.optima);
+    dot.classList.toggle("dot-bad", !est.optima);
+    estadoTxt.textContent = est.optima ? "Óptimas" : "Con fallas";
+    track.classList.toggle("bg-green-500", est.optima);
+    track.classList.toggle("bg-red-400", !est.optima);
+    thumb.style.transform = est.optima ? "translateX(16px)" : "translateX(0px)";
+    form.classList.toggle("hidden", est.optima);
+  }
+  pintar();
+
+  chk.addEventListener("change", () => {
+    if (chk.checked){
+      // Reactivar: se conserva el historial de la última falla reportada
+      guardar({ optima: true });
+    } else {
+      est.optima = false; pintar();
+    }
+  });
+
+  btnGuardar.addEventListener("click", () => {
+    if (!inFecha.value || !inReporte.value || !inUsuario.value){
+      alert("Fecha/hora de falla, número de reporte y usuario son obligatorios.");
+      return;
+    }
+    guardar({ optima: false, fechaFalla: inFecha.value, numeroReporte: inReporte.value, usuario: inUsuario.value });
+    msg.classList.remove("hidden");
+    setTimeout(() => msg.classList.add("hidden"), 2000);
+  });
+
+  function guardar(datos){
+    col.doc(String(t.id)).set({
+      id: t.id, nombre: t.nombre, region: t.region, zona: t.zona,
+      ...datos, actualizado: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true }).catch(err => alert("Error al guardar: " + err.message));
+  }
+
+  return node;
+}
+
+elBuscar.addEventListener("input", e => { filtro.texto = e.target.value; render(); });
+elRegion.addEventListener("change", e => { filtro.region = e.target.value; render(); });
+elEstatus.addEventListener("change", e => { filtro.estatus = e.target.value; render(); });
+
+// Sincronización en vivo (se conecta hasta tener sesión anónima activa)
+firebase.auth().onAuthStateChanged(user => {
+  if (!user) return;
+  col.onSnapshot(snap => {
+  snap.docChanges().forEach(ch => {
+    const d = ch.doc.data();
+    if (ch.type === "removed") { delete estados[d.id]; return; }
+    estados[d.id] = {
+      optima: d.optima !== false,
+      fechaFalla: d.fechaFalla || "",
+      numeroReporte: d.numeroReporte || "",
+      usuario: d.usuario || ""
+    };
+  });
+  render();
+  }, err => console.error(err));
+});
+
+document.getElementById("btnExportar").addEventListener("click", () => {
+  const filas = TIENDAS.map(t => {
+    const est = estados[t.id] || defaultEstado();
+    return {
+      "ID Tienda": t.id,
+      "Tienda": t.nombre,
+      "Región": t.region,
+      "Zona": t.zona,
+      "Estatus": est.optima ? "Óptimas" : "Con fallas",
+      "Fecha de la falla": est.fechaFalla || "",
+      "N° de reporte": est.numeroReporte || "",
+      "Usuario que reporta": est.usuario || ""
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(filas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Cámaras Frías");
+  const hoy = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `estatus_camaras_frias_${hoy}.xlsx`);
+});
+
+render();
+</script>
+</body>
+</html>
